@@ -2,20 +2,16 @@
 #define MEM_H
 
 #include <stdint.h>
+#include <stddef.h>
 
-#define MEM_SIZE (1u << 20)
+#define MEM_SIZE 2 << 10
 
 typedef struct
 {
-  uint8_t bytes[MEM_SIZE];
+  uint32_t words[MEM_SIZE];
 } Mem;
 
-uint8_t  mem_read8 (const Mem* m, uint32_t addr);
-uint16_t mem_read16(const Mem* m, uint32_t addr);
-uint32_t mem_read32(const Mem* m, uint32_t addr);
-
-void mem_write8 (Mem* m, uint32_t addr, uint8_t  val);
-void mem_write16(Mem* m, uint32_t addr, uint16_t val);
-void mem_write32(Mem* m, uint32_t addr, uint32_t val);
+void mem_init(Mem *m, const uint32_t *words, size_t n);
+uint32_t mem_read(const Mem* m, uint32_t addr);
 
 #endif

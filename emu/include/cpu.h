@@ -9,11 +9,13 @@ typedef struct
 {
   RegFile rf;
   uint32_t pc;
+  uint32_t ir;
+  bool ex;
   bool halted;
-  Mem* mem;
+  Mem *mem;
 } Cpu;
 
 void cpu_reset(Cpu *cpu, Mem *mem);
-void cpu_step(Cpu *cpu);
+void cpu_tick(Cpu *cpu);
 
 #endif
