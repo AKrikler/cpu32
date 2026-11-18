@@ -1,64 +1,111 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include "cpu.h"
 #include "alu.h"
 
-static const uint16_t ctrl_words[64] = 
-{
-  [0x00] = 0x6004,   /* ALU-R */
-  [0x01] = 0x2044,   /* ADDI  */
-  [0x02] = 0x2444,   /* ANDI  */
-  [0x03] = 0x2644,   /* ORI   */
-  [0x04] = 0x2844,   /* XORI  */
-  [0x05] = 0x3044,   /* SLTI  */
-  [0x06] = 0x3244,   /* SLTIU */
-  [0x07] = 0x2A44,   /* SLLI  */
-  [0x08] = 0x2C44,   /* SRLI  */
-  [0x09] = 0x2E44,   /* SRAI  */
-  [0x0A] = 0x2154,   /* LUI   */
-};
+enum { ST_FETCH, ST_EXEC, ST_EXEC2 };
 
-typedef struct
+static uint32_t ctrl_words[3][64];
+static bool rom_loaded = false;
+
+typedef union
 {
-  bool ir_we, pc_we, rf_we, v, alur;
-  uint8_t a_sel, b_sel, imm_sel, op;
+  uint32_t raw;
+  struct
+  {
+    uint32_t ir_we   : 1;
+    uint32_t pc_we   : 1;
+    uint32_t rf_we   : 1;
+    uint32_t a_sel   : 2;
+    uint32_t b_sel   : 2;
+    uint32_t imm_sel : 2;
+    uint32_t op      : 4;
+    uint32_t v       : 1;
+    uint32_t alur    : 1;
+    uint32_t nxt     : 2;
+  };
 } Ctrl;
 
-static Ctrl control(bool ex, bool halted, uint8_t opcode)
+static void load_ctrl_rom(const char *path)
 {
-  uint16_t word = ex ? ctrl_words[opcode] : 0x202B;
+  if (rom_loaded) return;
 
+  FILE *f = fopen(path, "r");
+  if (!f) { perror("Failed to open ctrl.rom"); exit(1); }
+
+  char header[64];
+  if (!fgets(header, sizeof(header), f))
+  {
+    fclose(f);
+    perror("Failed to read ctrl.rom header");
+    exit(1);
+  }
+
+  for (int state = 0; state < 3; state++)
+  {
+    for (int op = 0; op < 64; op++)
+    {
+      if (fscanf(f, "%x", &ctrl_words[state][op]) != 1)
+      {
+        fclose(f);
+        perror("Failed to read ctrl.rom data");
+        exit(1);
+      }
+    }
+  }
+
+  fclose(f);
+  rom_loaded = true;
+}
+
+static Ctrl control(uint8_t state, bool halted, uint8_t opcode)
+{
   Ctrl c;
-  c.ir_we   = (word & 1) && !halted;
-  c.pc_we   = ((word >> 1) & 1) && !halted;
-  c.rf_we   = ((word >> 2) & 1) && !halted;
-  c.a_sel   = (word >> 3) & 3;
-  c.b_sel   = (word >> 5) & 3;
-  c.imm_sel = (word >> 7) & 3;
-  c.op      = (word >> 9) & 0xF;
-  c.v       = (word >> 13) & 1;
-  c.alur    = (word >> 14) & 1;
+  c.raw = ctrl_words[state][opcode];
+
+  if (halted)
+  {
+    c.ir_we = 0;
+    c.pc_we = 0;
+    c.rf_we = 0;
+  }
+
   return c;
+}
+
+static bool branch(uint8_t opcode, AluResult f)
+{
+  uint8_t cond = (opcode >> 1) & 3;
+  bool hit = cond == 0 ? f.eq : cond == 1 ? f.lt : cond == 2 ? f.ltu : false;
+  return hit ^ (opcode & 1);
+}
+
+static uint32_t sext(uint32_t x, int bits)
+{
+  uint32_t m = 1u << (bits - 1);
+  return (x ^ m) - m;
 }
 
 static uint32_t imm_gen(uint32_t ir, uint8_t sel)
 {
-  uint32_t imm16 = (uint32_t)(int32_t)(int16_t)(ir & 0xFFFF);
-  uint32_t imm21 = ir & 0x1FFFFF;
-  if (imm21 & 0x100000) imm21 |= 0xFFE00000;
+  uint32_t i16 = sext(ir & 0xFFFF, 16);
+  uint32_t b16 = sext((((ir >> 21) & 0x1F) << 11) | (ir & 0x7FF), 16);
+  uint32_t u21 = ir & 0x1FFFFF;
 
   switch (sel)
   {
-    case 0:  return imm16;
-    case 1:  return imm16 << 2;
-    case 2:  return (ir & 0x1FFFFF) << 11;
-    default: return imm21 << 2;
+    case 0:  return i16;
+    case 1:  return b16 << 2;
+    case 2:  return u21 << 11;
+    default: return sext(u21, 21) << 2;
   }
 }
 
 void cpu_reset(Cpu *cpu, Mem *mem)
 {
+  load_ctrl_rom("../hardware/ctrl.rom");
   *cpu = (Cpu){0};
   cpu->mem = mem;
-  cpu->pc = 0; // TODO: Determine reset vector
 }
 
 void cpu_tick(Cpu *cpu)
@@ -70,22 +117,25 @@ void cpu_tick(Cpu *cpu)
   uint8_t r2 = (ir >> 11) & 0x1F;
   uint8_t func = ir & 0xF;
 
-  Ctrl c = control(cpu->ex, cpu->halted, opcode);
+  Ctrl c = control(cpu->state, cpu->halted, opcode);
 
   uint32_t o1 = reg_read(cpu->rf, r1);
   uint32_t o2 = reg_read(cpu->rf, r2);
   uint32_t imm = imm_gen(ir, c.imm_sel);
 
-  uint32_t a = c.a_sel == 0 ? o1 : c.a_sel == 1 ? cpu->pc : 0;
+  uint32_t a = c.a_sel == 0 ? o1 : c.a_sel == 1 ? cpu->pc : c.a_sel == 2 ? 0 : cpu->ipc;
   uint32_t b = c.b_sel == 0 ? o2 : c.b_sel == 1 ? 4 : imm;
-  uint32_t y = alu((AluOp)(c.alur ? func : c.op), a, b).y;
+  AluResult r = alu((AluOp)(c.alur ? func : c.op), a, b);
 
+  uint8_t next = c.nxt == 3 ? (branch(opcode, r) ? ST_EXEC2 : ST_FETCH) : c.nxt;
   uint32_t fetched = mem_read(cpu->mem, cpu->pc);
 
-  bool was_ex = cpu->ex;
-  if (c.ir_we) cpu->ir = fetched;
-  if (c.pc_we) cpu->pc = y;
-  if (c.rf_we) reg_write(cpu->rf, w, y);
-  if (was_ex && !c.v) cpu->halted = true;
-  cpu->ex = !was_ex;
+  if (c.ir_we) { cpu->ir = fetched; cpu->ipc = cpu->pc; }
+  if (c.pc_we) {
+    printf("JUMPING FROM %08X TO %08X (opcode %02X)\n", cpu->pc, r.y, opcode);
+    cpu->pc = r.y;
+  }
+  if (c.rf_we) reg_write(cpu->rf, w, r.y);
+  if (!c.v) cpu->halted = true;
+  cpu->state = next;
 }

@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -std=c17 -Wall -Wextra -Wpedantic -O2 -MMD -MP -Iinclude
-TARGET = cpu32-emu
+TARGET = cpu32
 
 SRCS = $(wildcard src/*.c)
 OBJS = $(SRCS:src/%.c=build/%.o)

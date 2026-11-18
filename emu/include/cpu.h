@@ -10,7 +10,8 @@ typedef struct
   RegFile rf;
   uint32_t pc;
   uint32_t ir;
-  bool ex;
+  uint32_t ipc;
+  uint8_t state;
   bool halted;
   Mem *mem;
 } Cpu;

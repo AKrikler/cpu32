@@ -3,5 +3,5 @@ build/
 *.d
 *~
 *.swp
-cpu32-emu
+cpu32
 compile_commands.json
