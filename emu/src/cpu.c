@@ -131,10 +131,7 @@ void cpu_tick(Cpu *cpu)
   uint32_t fetched = mem_read(cpu->mem, cpu->pc);
 
   if (c.ir_we) { cpu->ir = fetched; cpu->ipc = cpu->pc; }
-  if (c.pc_we) {
-    printf("JUMPING FROM %08X TO %08X (opcode %02X)\n", cpu->pc, r.y, opcode);
-    cpu->pc = r.y;
-  }
+  if (c.pc_we) cpu->pc = r.y & ~3u;
   if (c.rf_we) reg_write(cpu->rf, w, r.y);
   if (!c.v) cpu->halted = true;
   cpu->state = next;

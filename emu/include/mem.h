@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MEM_SIZE 2 << 10
+#define MEM_SIZE (1u << 10)
 
 typedef struct
 {

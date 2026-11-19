@@ -10,5 +10,5 @@ void mem_init(Mem *m, const uint32_t *words, size_t n)
 
 uint32_t mem_read(const Mem *m, uint32_t addr)
 {
-  return m->words[addr >> 2];
+  return m->words[addr >> 2 & (MEM_SIZE - 1)];
 }
